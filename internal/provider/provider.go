@@ -5,89 +5,129 @@ package provider
 
 import (
 	"context"
+	"fmt"
 	"net/http"
+	"os"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
-	"github.com/hashicorp/terraform-plugin-framework/function"
+	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/provider"
 	"github.com/hashicorp/terraform-plugin-framework/provider/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
-// Ensure ScaffoldingProvider satisfies various provider interfaces.
-var _ provider.Provider = &ScaffoldingProvider{}
-var _ provider.ProviderWithFunctions = &ScaffoldingProvider{}
+// Ensure SpeechmaticsProvider satisfies various provider interfaces.
+var _ provider.Provider = &SpeechmaticsProvider{}
 
-// ScaffoldingProvider defines the provider implementation.
-type ScaffoldingProvider struct {
+// SpeechmaticsProvider defines the provider implementation.
+type SpeechmaticsProvider struct {
 	// version is set to the provider version on release, "dev" when the
 	// provider is built and ran locally, and "test" when running acceptance
 	// testing.
 	version string
+	api_key string
 }
 
-// ScaffoldingProviderModel describes the provider data model.
-type ScaffoldingProviderModel struct {
+// SpeechmaticsProviderModel describes the provider data model.
+type SpeechmaticsProviderModel struct {
 	Endpoint types.String `tfsdk:"endpoint"`
+	ApiKey   types.String `tfsdk:"api_key"`
 }
 
-func (p *ScaffoldingProvider) Metadata(ctx context.Context, req provider.MetadataRequest, resp *provider.MetadataResponse) {
-	resp.TypeName = "scaffolding"
+func (p *SpeechmaticsProvider) Metadata(ctx context.Context, req provider.MetadataRequest, resp *provider.MetadataResponse) {
+	resp.TypeName = "speechmatics"
 	resp.Version = p.version
 }
 
-func (p *ScaffoldingProvider) Schema(ctx context.Context, req provider.SchemaRequest, resp *provider.SchemaResponse) {
+func (p *SpeechmaticsProvider) Schema(ctx context.Context, req provider.SchemaRequest, resp *provider.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		Attributes: map[string]schema.Attribute{
 			"endpoint": schema.StringAttribute{
-				MarkdownDescription: "Example provider attribute",
+				MarkdownDescription: "Speechmatics endpoint to use",
 				Optional:            true,
+			},
+			"api_key": schema.StringAttribute{
+				MarkdownDescription: "API key to authenticate with Speechmatics",
+				Required:            true,
+				Sensitive:           true,
 			},
 		},
 	}
 }
 
-func (p *ScaffoldingProvider) Configure(ctx context.Context, req provider.ConfigureRequest, resp *provider.ConfigureResponse) {
-	var data ScaffoldingProviderModel
+func (p *SpeechmaticsProvider) Configure(ctx context.Context, req provider.ConfigureRequest, resp *provider.ConfigureResponse) {
+	var data SpeechmaticsProviderModel
 
 	resp.Diagnostics.Append(req.Config.Get(ctx, &data)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	// Check that API key is provided in the provider
+	if data.ApiKey.IsUnknown() {
+		resp.Diagnostics.AddAttributeError(
+			path.Root("api_key"),
+			"Speechmatics API key not provided",
+			"Speechmatics requires an API key to authenticate",
+		)
+	}
+
+	endpoint := os.Getenv("SPEECHMATICS_URL")
+	api_key := os.Getenv("SPEECHMATICS_API_TOKEN")
+
+	if !data.Endpoint.IsNull() {
+		endpoint = data.Endpoint.ValueString()
+	}
+
+	if !data.ApiKey.IsNull() {
+		api_key = data.ApiKey.ValueString()
+	}
 
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	// Configuration values are now available.
-	// if data.Endpoint.IsNull() { /* ... */ }
+	// Create a http client to interact with Speechmatics API
+	client := &http.Client{}
 
-	// Example client configuration for data sources and resources
-	client := http.DefaultClient
+	// Validate API token
+	get_req, err := http.NewRequest("GET", fmt.Sprintf("%s/v2/jobs", endpoint), nil)
+	get_req.Header.Add("Authorization", fmt.Sprintf("Bearer %s", api_key))
+
+	get_resp, err := client.Do(get_req)
+	if err != nil {
+		fmt.Printf("error %s", err)
+		return
+	}
+	defer get_resp.Body.Close()
+
+	if get_resp.StatusCode != 200 {
+		fmt.Printf("Error validating Speechmatics API token, please ensure you have the correct endpoint and API key set")
+		return
+	}
+
 	resp.DataSourceData = client
 	resp.ResourceData = client
 }
 
-func (p *ScaffoldingProvider) Resources(ctx context.Context) []func() resource.Resource {
+func (p *SpeechmaticsProvider) Resources(ctx context.Context) []func() resource.Resource {
 	return []func() resource.Resource{
-		NewExampleResource,
+		NewTranscriptionResource,
 	}
 }
 
-func (p *ScaffoldingProvider) DataSources(ctx context.Context) []func() datasource.DataSource {
+func (p *SpeechmaticsProvider) DataSources(ctx context.Context) []func() datasource.DataSource {
 	return []func() datasource.DataSource{
 		NewExampleDataSource,
 	}
 }
 
-func (p *ScaffoldingProvider) Functions(ctx context.Context) []func() function.Function {
-	return []func() function.Function{
-		NewExampleFunction,
-	}
-}
-
-func New(version string) func() provider.Provider {
+func New(version string, api_key string) func() provider.Provider {
 	return func() provider.Provider {
-		return &ScaffoldingProvider{
+		return &SpeechmaticsProvider{
 			version: version,
+			api_key: api_key,
 		}
 	}
 }
